@@ -24,6 +24,21 @@ option(CLANGD_MALLOC_TRIM "Call malloc_trim(3) periodically in Clangd. (only tak
 # -DCLANG_TIDY_CHECKS=Off avoids a dependency on clang-tidy, reducing rebuilds.
 option(CLANGD_TIDY_CHECKS "Link all clang-tidy checks into clangd" ON)
 
+if(NOT DEFINED CLANGD_ENABLE_LIBXML2)
+  if(LLVM_ENABLE_LIBXML2)
+    set(CLANGD_ENABLE_LIBXML2 ON CACHE BOOL "Use libxml2 for GIR documentation support in Clangd")
+  else()
+    set(CLANGD_ENABLE_LIBXML2 OFF CACHE BOOL "Use libxml2 for GIR documentation support in Clangd")
+  endif()
+endif()
+if(CLANGD_ENABLE_LIBXML2)
+  find_package(LibXml2)
+  if(NOT LibXml2_FOUND)
+    message(WARNING "libxml2 not found, disabling GIR documentation support")
+    set(CLANGD_ENABLE_LIBXML2 OFF)
+  endif()
+endif()
+
 llvm_canonicalize_cmake_booleans(
   CLANGD_BUILD_XPC
   CLANGD_ENABLE_REMOTE
@@ -32,6 +47,7 @@ llvm_canonicalize_cmake_booleans(
   CLANGD_TIDY_CHECKS
   LLVM_ENABLE_ZLIB
   CLANGD_DECISION_FOREST
+  CLANGD_ENABLE_LIBXML2
 )
 
 configure_file(
@@ -88,6 +104,7 @@ add_clang_library(clangDaemon STATIC
   Format.cpp
   FS.cpp
   FuzzyMatch.cpp
+  GIRDocumentation.cpp
   GlobalCompilationDatabase.cpp
   Headers.cpp
   HeaderSourceSwitch.cpp
@@ -192,6 +209,9 @@ target_link_libraries(clangDaemon
   )
 if(CLANGD_TIDY_CHECKS)
   target_link_libraries(clangDaemon PRIVATE ${ALL_CLANG_TIDY_CHECKS})
+endif()
+if(CLANGD_ENABLE_LIBXML2)
+  target_link_libraries(clangDaemon PRIVATE LibXml2::LibXml2)
 endif()
 
 add_subdirectory(refactor/tweaks)

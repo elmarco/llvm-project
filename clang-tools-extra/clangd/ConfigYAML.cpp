@@ -327,6 +327,12 @@ private:
       if (auto Value = scalarValue(N, "CommentFormat"))
         F.CommentFormat = *Value;
     });
+    Dict.handle("GIRPaths", [&](Node &N) {
+      if (auto *S = llvm::dyn_cast<SequenceNode>(&N))
+        for (auto &E : *S)
+          if (auto Value = scalarValue(E, "GIRPaths"))
+            F.GIRPaths.push_back(std::move(*Value));
+    });
     Dict.parse(N);
   }
 

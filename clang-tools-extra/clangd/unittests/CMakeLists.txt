@@ -62,6 +62,7 @@ add_unittest(ClangdUnitTests ClangdTests
   FormatTests.cpp
   FSTests.cpp
   FuzzyMatchTests.cpp
+  GIRDocumentationTests.cpp
   GlobalCompilationDatabaseTests.cpp
   HeadersTests.cpp
   HeaderSourceSwitchTests.cpp
@@ -191,6 +192,10 @@ if (CLANGD_ENABLE_REMOTE)
     PRIVATE
     clangdRemoteMarshalling
     clangdRemoteIndexProto)
+endif()
+
+if(CLANGD_ENABLE_LIBXML2)
+  target_link_libraries(ClangdTests PRIVATE LibXml2::LibXml2)
 endif()
 
 if (CLANGD_BUILD_XPC)

@@ -827,6 +827,15 @@ struct FragmentCompiler {
           C.Documentation.CommentFormat = *Val;
         });
     }
+    if (!F.GIRPaths.empty()) {
+      std::vector<std::string> Paths;
+      for (auto &P : F.GIRPaths)
+        Paths.push_back(std::move(*P));
+      Out.Apply.push_back(
+          [Paths = std::move(Paths)](const Params &, Config &C) {
+            C.Documentation.GIRPaths = Paths;
+          });
+    }
   }
 
   constexpr static llvm::SourceMgr::DiagKind Error = llvm::SourceMgr::DK_Error;

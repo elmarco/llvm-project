@@ -11,7 +11,9 @@
 #include "AST.h"
 #include "CodeCompletionStrings.h"
 #include "Config.h"
+#include "Feature.h"
 #include "FindTarget.h"
+#include "GIRDocumentation.h"
 #include "Headers.h"
 #include "IncludeCleaner.h"
 #include "ParsedAST.h"
@@ -1422,6 +1424,22 @@ std::optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
         HI->Documentation = std::string(S.Documentation);
     });
   }
+
+#if CLANGD_ENABLE_LIBXML2
+  // If still no documentation, try GIR (GObject Introspection) files.
+  if (HI->Documentation.empty()) {
+    const Config &Cfg = Config::current();
+    static GIRDocumentationProvider GIRProvider;
+    if (!GIRProvider.isLoaded()) {
+      if (Cfg.Documentation.GIRPaths.empty())
+        GIRProvider.loadFromDefaultPaths();
+      else
+        GIRProvider.loadFromPaths(Cfg.Documentation.GIRPaths);
+    }
+    if (auto Doc = GIRProvider.lookup(HI->Name))
+      HI->Documentation = std::move(*Doc);
+  }
+#endif
 
   // Reformat Definition
   if (!HI->Definition.empty()) {

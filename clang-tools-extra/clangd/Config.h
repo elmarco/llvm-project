@@ -224,6 +224,9 @@ struct Config {
 
   struct {
     CommentFormatPolicy CommentFormat = CommentFormatPolicy::PlainText;
+    /// Paths to GIR files or directories for documentation lookup.
+    /// If empty, auto-detects from system paths.
+    std::vector<std::string> GIRPaths;
   } Documentation;
 };
 

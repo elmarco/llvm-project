@@ -410,6 +410,9 @@ struct Fragment {
     /// - Markdown: Treat comments as Markdown.
     /// - Doxygen: Treat comments as doxygen.
     std::optional<Located<std::string>> CommentFormat;
+    /// Paths to GIR files or directories for documentation lookup.
+    /// When empty, auto-detects from /usr/share/gir-1.0/.
+    std::vector<Located<std::string>> GIRPaths;
   };
   DocumentationBlock Documentation;
 };
