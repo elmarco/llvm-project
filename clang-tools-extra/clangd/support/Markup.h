@@ -218,6 +218,11 @@ public:
 
   BulletList &addBulletList();
 
+  /// Adds a block of raw markdown that is passed through verbatim in markdown
+  /// rendering. In plain text, the content is also passed through as-is.
+  /// Useful for content like GFM tables that has no Markup abstraction.
+  void addRawMarkdown(std::string Content);
+
   /// Doesn't contain any trailing newlines and escaped markdown syntax.
   /// It is expected that the result of this function
   /// is rendered as markdown.

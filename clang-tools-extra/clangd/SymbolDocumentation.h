@@ -199,6 +199,29 @@ private:
       FreeParagraphs;
 };
 
+struct GTKDocParam {
+  std::string Name;
+  std::string Description;
+};
+
+struct GTKDocDescriptionBlock {
+  enum Kind { Paragraph, Code, Table } BlockKind;
+  std::string Text;
+  std::string Language;
+};
+
+struct GTKDocInfo {
+  llvm::SmallVector<GTKDocDescriptionBlock> Description;
+  llvm::SmallVector<GTKDocParam> Params;
+  std::string Returns;
+  std::string Since;
+  std::string Deprecated;
+  std::string Stability;
+};
+
+GTKDocInfo parseGTKDoc(llvm::StringRef Doc);
+void renderGTKDocToMarkup(const GTKDocInfo &Info, markup::Document &Output);
+
 struct KernelDocParam {
   std::string Name;
   std::string Description;

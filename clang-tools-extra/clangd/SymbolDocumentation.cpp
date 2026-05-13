@@ -1073,5 +1073,430 @@ void renderKernelDocToMarkup(const KernelDocInfo &Info,
   }
 }
 
+namespace {
+
+std::pair<std::string, StringRef> splitAnnotations(StringRef Text) {
+  StringRef T = Text.ltrim();
+  std::string Annotations;
+  while (T.starts_with("(")) {
+    auto Close = T.find(')');
+    if (Close == StringRef::npos)
+      break;
+    if (!Annotations.empty())
+      Annotations += " ";
+    Annotations += T.slice(0, Close + 1).str();
+    T = T.drop_front(Close + 1).ltrim();
+  }
+  if (Annotations.empty())
+    return {"", Text};
+  T.consume_front(":");
+  T = T.ltrim();
+  return {Annotations, T};
+}
+
+void convertGTKDocInlineMarkup(llvm::StringRef Text,
+                               markup::Paragraph &Para) {
+  unsigned I = 0;
+  unsigned Start = 0;
+  while (I < Text.size()) {
+    char C = Text[I];
+
+    // gi-docgen cross-references: [type@Namespace.Name]
+    if (C == '[') {
+      auto Close = Text.find(']', I + 1);
+      if (Close != StringRef::npos) {
+        StringRef Inner = Text.slice(I + 1, Close);
+        auto AtPos = Inner.find('@');
+        if (AtPos != StringRef::npos) {
+          StringRef LinkTarget = Inner.drop_front(AtPos + 1);
+          // Extract the name after the last dot: Namespace.Name -> Name
+          auto DotPos = LinkTarget.rfind('.');
+          StringRef DisplayName =
+              DotPos != StringRef::npos
+                  ? LinkTarget.drop_front(DotPos + 1)
+                  : LinkTarget;
+          if (!DisplayName.empty()) {
+            if (I > Start)
+              Para.appendText(Text.slice(Start, I));
+            Para.appendCode(DisplayName);
+            I = Close + 1;
+            Start = I;
+            continue;
+          }
+        }
+      }
+    }
+
+    if (C == '#' || C == '%' || C == '@') {
+      if (I > Start)
+        Para.appendText(Text.slice(Start, I));
+      unsigned J = I + 1;
+      while (J < Text.size() && (llvm::isAlnum(Text[J]) || Text[J] == '_'))
+        ++J;
+      if (J > I + 1) {
+        Para.appendCode(Text.slice(I + 1, J));
+        I = J;
+        Start = J;
+        continue;
+      }
+    }
+
+    // Bare function references: identifier()
+    if ((llvm::isAlpha(C) || C == '_') && (I == 0 || !llvm::isAlnum(Text[I - 1]))) {
+      unsigned J = I + 1;
+      while (J < Text.size() && (llvm::isAlnum(Text[J]) || Text[J] == '_'))
+        ++J;
+      if (J + 1 < Text.size() && Text[J] == '(' && Text[J + 1] == ')') {
+        if (I > Start)
+          Para.appendText(Text.slice(Start, I));
+        Para.appendCode(Text.slice(I, J + 2));
+        I = J + 2;
+        Start = I;
+        continue;
+      }
+    }
+
+    ++I;
+  }
+  if (Start < Text.size())
+    Para.appendText(Text.slice(Start, Text.size()));
+}
+
+} // namespace
+
+GTKDocInfo parseGTKDoc(llvm::StringRef Doc) {
+  GTKDocInfo Info;
+
+  enum State {
+    Header,
+    Params,
+    Returns,
+    Body,
+    CodeBlock,
+    FencedCodeBlock,
+    Table
+  } St = Header;
+  std::string CurrentCodeBlock;
+  std::string CurrentCodeLang;
+  std::string CodeFence;
+  std::string CurrentParagraph;
+  std::string CurrentTable;
+
+  auto FlushParagraph = [&] {
+    StringRef Trimmed = StringRef(CurrentParagraph).trim();
+    if (!Trimmed.empty())
+      Info.Description.push_back(
+          {GTKDocDescriptionBlock::Paragraph, Trimmed.str(), ""});
+    CurrentParagraph.clear();
+  };
+
+  auto NormalizeTableRow = [](StringRef Row) -> std::string {
+    StringRef T = Row.trim();
+    std::string Result;
+    if (!T.starts_with("|"))
+      Result += "| ";
+    Result += T.str();
+    if (!T.ends_with("|"))
+      Result += " |";
+    return Result;
+  };
+
+  auto FlushTable = [&] {
+    StringRef Trimmed = StringRef(CurrentTable).rtrim('\n');
+    if (Trimmed.empty()) {
+      CurrentTable.clear();
+      return;
+    }
+    std::string GFMTable;
+    llvm::SmallVector<StringRef> Rows;
+    Trimmed.split(Rows, '\n');
+    for (auto Row : Rows) {
+      if (!GFMTable.empty())
+        GFMTable += '\n';
+      GFMTable += NormalizeTableRow(Row);
+    }
+    Info.Description.push_back(
+        {GTKDocDescriptionBlock::Table, std::move(GFMTable), ""});
+    CurrentTable.clear();
+  };
+
+  auto IsTableSeparator = [](StringRef T) {
+    return T.find_first_not_of("-|: ") == StringRef::npos && T.contains('-') &&
+           T.contains('|');
+  };
+
+  auto IsTableLine = [&](StringRef S, bool InTable) {
+    StringRef T = S.ltrim();
+    if (T.empty())
+      return false;
+    if (IsTableSeparator(T))
+      return true;
+    if (T.starts_with("|") || T.ends_with("|"))
+      return true;
+    // Inside a table, any line with interior | is a continuation row.
+    if (InTable && T.contains('|'))
+      return true;
+    return false;
+  };
+
+  StringRef Line, Rest;
+  bool SeenNonEmpty = false;
+  for (std::tie(Line, Rest) = Doc.split('\n');
+       !(Line.empty() && Rest.empty());
+       std::tie(Line, Rest) = Rest.split('\n')) {
+
+    StringRef Trimmed = Line.ltrim();
+
+    // Skip leading blank lines and the function name header line.
+    if (!SeenNonEmpty) {
+      if (Trimmed.empty())
+        continue;
+      SeenNonEmpty = true;
+      if (Trimmed.ends_with(":") &&
+          Trimmed.drop_back(1).trim().find(' ') == StringRef::npos)
+        continue;
+    }
+
+    if (St == CodeBlock) {
+      if (Trimmed == "]|") {
+        StringRef Code = StringRef(CurrentCodeBlock).rtrim('\n');
+        if (!Code.empty())
+          Info.Description.push_back(
+              {GTKDocDescriptionBlock::Code, Code.str(), CurrentCodeLang});
+        St = Body;
+        continue;
+      }
+      CurrentCodeBlock += Line.str() + "\n";
+      continue;
+    }
+
+    if (St == FencedCodeBlock) {
+      if (Trimmed.starts_with(CodeFence)) {
+        StringRef Code = StringRef(CurrentCodeBlock).rtrim('\n');
+        if (!Code.empty())
+          Info.Description.push_back(
+              {GTKDocDescriptionBlock::Code, Code.str(), CurrentCodeLang});
+        St = Body;
+        continue;
+      }
+      CurrentCodeBlock += Line.str() + "\n";
+      continue;
+    }
+
+    // Code block start: |[<!-- language="C" -->
+    if (Trimmed.starts_with("|[")) {
+      if (St == Body)
+        FlushParagraph();
+      St = CodeBlock;
+      CurrentCodeBlock.clear();
+      CurrentCodeLang = "c";
+      StringRef After = Trimmed.drop_front(2).ltrim();
+      if (After.consume_front("<!--")) {
+        auto LangPos = After.find("language=\"");
+        if (LangPos != StringRef::npos) {
+          StringRef LangStr = After.drop_front(LangPos + 10);
+          auto End = LangStr.find('"');
+          if (End != StringRef::npos)
+            CurrentCodeLang = LangStr.take_front(End).str();
+        }
+      }
+      continue;
+    }
+
+    // Markdown fenced code block: ```lang, ``` { .lang }, or ~~~
+    if (Trimmed.starts_with("```") || Trimmed.starts_with("~~~")) {
+      if (St == Body)
+        FlushParagraph();
+      CodeFence =
+          Trimmed.take_while([](char C) { return C == '`' || C == '~'; }).str();
+      StringRef LangSpec = Trimmed.drop_front(CodeFence.size()).ltrim();
+      // gi-docgen/Pandoc attribute syntax: ``` { .lang }
+      if (LangSpec.starts_with("{")) {
+        StringRef Inner = LangSpec.drop_front(1).ltrim();
+        if (Inner.consume_front(".")) {
+          auto End = Inner.find_first_of(" }");
+          CurrentCodeLang =
+              Inner.take_front(End == StringRef::npos ? Inner.size() : End)
+                  .str();
+        } else {
+          CurrentCodeLang = "c";
+        }
+      } else {
+        CurrentCodeLang = LangSpec.str();
+      }
+      CurrentCodeBlock.clear();
+      St = FencedCodeBlock;
+      continue;
+    }
+
+    // Parameter line: @name: description  or  @name: (annotations): description
+    if (Trimmed.starts_with("@")) {
+      auto ColonPos = Trimmed.find(':');
+      if (ColonPos != StringRef::npos && ColonPos > 1) {
+        StringRef ParamName = Trimmed.slice(1, ColonPos);
+        bool IsParam = true;
+        for (char C : ParamName)
+          if (!(llvm::isAlnum(C) || C == '_')) {
+            IsParam = false;
+            break;
+          }
+        if (IsParam) {
+          St = Params;
+          StringRef Desc = Trimmed.drop_front(ColonPos + 1).ltrim();
+          Info.Params.push_back({ParamName.str(), Desc.str()});
+          continue;
+        }
+      }
+    }
+
+    // Returns: description
+    if (Trimmed.starts_with("Returns:")) {
+      St = Returns;
+      Info.Returns = Trimmed.drop_front(8).ltrim().str();
+      continue;
+    }
+
+    // Since: version
+    if (Trimmed.starts_with("Since:")) {
+      Info.Since = Trimmed.drop_front(6).ltrim().str();
+      continue;
+    }
+
+    // Deprecated: version. description
+    if (Trimmed.starts_with("Deprecated:")) {
+      Info.Deprecated = Trimmed.drop_front(11).ltrim().str();
+      continue;
+    }
+
+    // Stability: Stable|Unstable|Private
+    if (Trimmed.starts_with("Stability:")) {
+      Info.Stability = Trimmed.drop_front(10).ltrim().str();
+      continue;
+    }
+
+    // Param continuation: any non-empty line that isn't a new tag.
+    if (St == Params && !Trimmed.empty()) {
+      Info.Params.back().Description += " " + Trimmed.str();
+      continue;
+    }
+
+    // Returns continuation: any non-empty line that isn't a new tag.
+    if (St == Returns && !Trimmed.empty()) {
+      Info.Returns += " " + Trimmed.str();
+      continue;
+    }
+
+    // Table continuation.
+    if (St == Table) {
+      if (IsTableLine(Line, true)) {
+        CurrentTable += Line.str() + "\n";
+        continue;
+      }
+      FlushTable();
+      St = Body;
+      // Fall through to body handling.
+    }
+
+    // Markdown table: detect separator row and pull back header from paragraph.
+    if (IsTableSeparator(Trimmed)) {
+      if (!CurrentParagraph.empty() && CurrentParagraph.find('|') != std::string::npos) {
+        CurrentTable = CurrentParagraph + "\n" + Line.str() + "\n";
+        CurrentParagraph.clear();
+      } else {
+        if (St == Body)
+          FlushParagraph();
+        CurrentTable = Line.str() + "\n";
+      }
+      St = Table;
+      continue;
+    }
+
+    // Markdown table start (line with leading/trailing |).
+    if (IsTableLine(Line, false)) {
+      if (St == Body)
+        FlushParagraph();
+      CurrentTable = Line.str() + "\n";
+      St = Table;
+      continue;
+    }
+
+    // Transition to body on first non-structured content.
+    if (St == Header || St == Params || St == Returns) {
+      St = Body;
+    }
+
+    // Body text.
+    if (Trimmed.empty()) {
+      FlushParagraph();
+    } else {
+      if (!CurrentParagraph.empty())
+        CurrentParagraph += " ";
+      CurrentParagraph += Trimmed.str();
+    }
+  }
+
+  FlushTable();
+  FlushParagraph();
+
+  return Info;
+}
+
+void renderGTKDocToMarkup(const GTKDocInfo &Info, markup::Document &Output) {
+  if (!Info.Description.empty()) {
+    for (const auto &Block : Info.Description) {
+      if (Block.BlockKind == GTKDocDescriptionBlock::Paragraph)
+        convertGTKDocInlineMarkup(Block.Text, Output.addParagraph());
+      else if (Block.BlockKind == GTKDocDescriptionBlock::Table)
+        Output.addRawMarkdown(Block.Text);
+      else
+        Output.addCodeBlock(Block.Text, Block.Language);
+    }
+  }
+
+  if (!Info.Params.empty()) {
+    Output.addHeading(3).appendText("Parameters");
+    markup::BulletList &L = Output.addBulletList();
+    for (const auto &P : Info.Params) {
+      markup::Paragraph &Para = L.addItem().addParagraph();
+      Para.appendCode(P.Name);
+      if (!P.Description.empty()) {
+        auto [Ann, Desc] = splitAnnotations(P.Description);
+        Para.appendText(" - ");
+        convertGTKDocInlineMarkup(Desc, Para);
+        if (!Ann.empty()) {
+          Para.appendText(" ");
+          Para.appendEmphasizedText(Ann);
+        }
+      }
+    }
+  }
+
+  if (!Info.Returns.empty()) {
+    Output.addHeading(3).appendText("Returns");
+    auto &RetPara = Output.addParagraph();
+    auto [Ann, Desc] = splitAnnotations(Info.Returns);
+    convertGTKDocInlineMarkup(Desc, RetPara);
+    if (!Ann.empty()) {
+      RetPara.appendText(" ");
+      RetPara.appendEmphasizedText(Ann);
+    }
+  }
+
+  if (!Info.Deprecated.empty()) {
+    Output.addParagraph().appendBoldText("Deprecated:").appendText(
+        " " + Info.Deprecated);
+  }
+
+  if (!Info.Since.empty()) {
+    Output.addParagraph().appendBoldText("Since:").appendText(
+        " " + Info.Since);
+  }
+
+  if (!Info.Stability.empty()) {
+    Output.addParagraph().appendBoldText("Stability:").appendText(
+        " " + Info.Stability);
+  }
+}
+
 } // namespace clangd
 } // namespace clang

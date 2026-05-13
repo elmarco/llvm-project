@@ -430,6 +430,26 @@ std::string indentLines(llvm::StringRef Input) {
   return IndentedR;
 }
 
+class RawMarkdownBlock : public Block {
+public:
+  void renderEscapedMarkdown(llvm::raw_ostream &OS) const override {
+    renderMarkdown(OS);
+  }
+  void renderMarkdown(llvm::raw_ostream &OS) const override {
+    OS << Contents << "\n\n";
+  }
+  void renderPlainText(llvm::raw_ostream &OS) const override {
+    OS << Contents << "\n\n";
+  }
+  std::unique_ptr<Block> clone() const override {
+    return std::make_unique<RawMarkdownBlock>(*this);
+  }
+  RawMarkdownBlock(std::string Contents) : Contents(std::move(Contents)) {}
+
+private:
+  std::string Contents;
+};
+
 class Heading : public Paragraph {
 public:
   Heading(size_t Level) : Level(Level) {}
@@ -825,6 +845,11 @@ void Document::addRuler() { Children.push_back(std::make_unique<Ruler>()); }
 void Document::addCodeBlock(std::string Code, std::string Language) {
   Children.emplace_back(
       std::make_unique<CodeBlock>(std::move(Code), std::move(Language)));
+}
+
+void Document::addRawMarkdown(std::string Content) {
+  Children.emplace_back(
+      std::make_unique<RawMarkdownBlock>(std::move(Content)));
 }
 
 std::string Document::asEscapedMarkdown() const {

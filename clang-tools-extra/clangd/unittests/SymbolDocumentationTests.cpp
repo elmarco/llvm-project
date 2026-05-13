@@ -732,6 +732,478 @@ line
   }
 }
 
+TEST(GTKDoc, ParseBasic) {
+  GTKDocInfo Info = parseGTKDoc(
+      "g_list_append:\n"
+      "@list: a pointer to a #GList\n"
+      "@data: the data for the new element\n"
+      "\n"
+      "Adds a new element on to the end of the list.\n"
+      "\n"
+      "Returns: either @list or the new start of the #GList if @list was %NULL\n"
+      "\n"
+      "Since: 2.0\n");
+
+  ASSERT_EQ(Info.Description.size(), 1u);
+  EXPECT_EQ(Info.Description[0].Text,
+            "Adds a new element on to the end of the list.");
+  ASSERT_EQ(Info.Params.size(), 2u);
+  EXPECT_EQ(Info.Params[0].Name, "list");
+  EXPECT_EQ(Info.Params[0].Description, "a pointer to a #GList");
+  EXPECT_EQ(Info.Params[1].Name, "data");
+  EXPECT_EQ(Info.Params[1].Description, "the data for the new element");
+  EXPECT_EQ(Info.Returns,
+            "either @list or the new start of the #GList if @list was %NULL");
+  EXPECT_EQ(Info.Since, "2.0");
+}
+
+TEST(GTKDoc, ParseAnnotations) {
+  GTKDocInfo Info = parseGTKDoc(
+      "g_hash_table_new_full:\n"
+      "@hash_func: a function to create a hash value\n"
+      "@key_destroy_func: (nullable): a function to free the key\n"
+      "    used when removing the entry from the #GHashTable\n"
+      "\n"
+      "Creates a new #GHashTable.\n"
+      "\n"
+      "Returns: (transfer full): a new #GHashTable\n");
+
+  ASSERT_EQ(Info.Params.size(), 2u);
+  EXPECT_EQ(Info.Params[0].Name, "hash_func");
+  EXPECT_EQ(Info.Params[1].Name, "key_destroy_func");
+  EXPECT_EQ(Info.Params[1].Description,
+            "(nullable): a function to free the key "
+            "used when removing the entry from the #GHashTable");
+  EXPECT_EQ(Info.Returns, "(transfer full): a new #GHashTable");
+}
+
+TEST(GTKDoc, ParseParamContinuation3Spaces) {
+  GTKDocInfo Info = parseGTKDoc(
+      "\n g_uri_escape_bytes:\n"
+      " @unescaped: (array length=length): the unescaped input data.\n"
+      " @length: the length of @unescaped\n"
+      " @reserved_chars_allowed: (nullable): a string of reserved\n"
+      "   characters that are allowed to be used, or %NULL.\n"
+      "\n"
+      " Escapes arbitrary data for use in a URI.\n"
+      "\n"
+      " Since: 2.66\n ");
+
+  ASSERT_EQ(Info.Description.size(), 1u);
+  EXPECT_EQ(Info.Description[0].Text,
+            "Escapes arbitrary data for use in a URI.");
+  ASSERT_EQ(Info.Params.size(), 3u);
+  EXPECT_EQ(Info.Params[2].Name, "reserved_chars_allowed");
+  EXPECT_EQ(Info.Params[2].Description,
+            "(nullable): a string of reserved "
+            "characters that are allowed to be used, or %NULL.");
+}
+
+TEST(GTKDoc, RenderToMarkup) {
+  GTKDocInfo Info;
+  Info.Description = {
+      {GTKDocDescriptionBlock::Paragraph, "Appends an element to the list.", ""}};
+  Info.Params = {{"list", "a pointer to a #GList"},
+                 {"data", "the data"}};
+  Info.Returns = "the new start of the #GList";
+  Info.Since = "2.0";
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("Appends an element to the list."), std::string::npos);
+  EXPECT_NE(Rendered.find("### Parameters"), std::string::npos);
+  EXPECT_NE(Rendered.find("`list`"), std::string::npos);
+  EXPECT_NE(Rendered.find("`GList`"), std::string::npos);
+  EXPECT_NE(Rendered.find("### Returns"), std::string::npos);
+  EXPECT_NE(Rendered.find("**Since:**"), std::string::npos);
+  EXPECT_NE(Rendered.find("2.0"), std::string::npos);
+}
+
+TEST(GTKDoc, RenderAnnotations) {
+  GTKDocInfo Info;
+  Info.Description = {
+      {GTKDocDescriptionBlock::Paragraph, "Creates a new hash table.", ""}};
+  Info.Params = {{"func", "(nullable): the hash function"},
+                 {"data", "plain data"}};
+  Info.Returns = "(transfer full): a new #GHashTable";
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("the hash function *(nullable)*"), std::string::npos);
+  EXPECT_NE(Rendered.find("a new `GHashTable` *(transfer full)*"),
+            std::string::npos);
+  EXPECT_NE(Rendered.find("plain data"), std::string::npos);
+}
+
+TEST(GTKDoc, RenderMultipleAnnotations) {
+  GTKDocInfo Info;
+  Info.Returns = "(transfer full) (nullable): The scheme component";
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("The scheme component"), std::string::npos);
+  EXPECT_NE(Rendered.find("*(transfer full) (nullable)*"), std::string::npos);
+  EXPECT_EQ(Rendered.find("(transfer full) (nullable): The"), std::string::npos);
+}
+
+TEST(GTKDoc, ReturnsMultiLine) {
+  GTKDocInfo Info = parseGTKDoc(
+      "g_uri_parse_scheme:\n"
+      "@uri: a valid URI.\n"
+      "\n"
+      "Gets the scheme.\n"
+      "\n"
+      "Returns: (transfer full) (nullable): The scheme, or\n"
+      "    %NULL on error.\n"
+      "\n"
+      "Since: 2.16\n");
+
+  EXPECT_EQ(Info.Returns,
+            "(transfer full) (nullable): The scheme, or %NULL on error.");
+  EXPECT_EQ(Info.Since, "2.16");
+}
+
+TEST(GTKDoc, ParseDeprecatedAndStability) {
+  GTKDocInfo Info = parseGTKDoc(
+      "old_function:\n"
+      "@data: the data\n"
+      "\n"
+      "Does something old.\n"
+      "\n"
+      "Returns: something\n"
+      "\n"
+      "Since: 1.0\n"
+      "Deprecated: 2.0. Use new_function() instead.\n"
+      "Stability: Unstable\n");
+
+  ASSERT_EQ(Info.Description.size(), 1u);
+  EXPECT_EQ(Info.Description[0].Text, "Does something old.");
+  EXPECT_EQ(Info.Returns, "something");
+  EXPECT_EQ(Info.Since, "1.0");
+  EXPECT_EQ(Info.Deprecated, "2.0. Use new_function() instead.");
+  EXPECT_EQ(Info.Stability, "Unstable");
+}
+
+TEST(GTKDoc, ParseCodeBlocks) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "Example usage:\n"
+      "\n"
+      "|[<!-- language=\"C\" -->\n"
+      "int x = my_func();\n"
+      "printf(\"%d\\n\", x);\n"
+      "]|\n"
+      "\n"
+      "Another paragraph.\n");
+
+  ASSERT_EQ(Info.Description.size(), 3u);
+  EXPECT_EQ(Info.Description[0].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[0].Text, "Example usage:");
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Code);
+  EXPECT_EQ(Info.Description[1].Language, "C");
+  EXPECT_EQ(Info.Description[1].Text,
+            "int x = my_func();\nprintf(\"%d\\n\", x);");
+  EXPECT_EQ(Info.Description[2].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[2].Text, "Another paragraph.");
+}
+
+TEST(GTKDoc, ParseCodeBlockNoLanguage) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "Example:\n"
+      "\n"
+      "|[\n"
+      "some code\n"
+      "]|\n");
+
+  ASSERT_EQ(Info.Description.size(), 2u);
+  EXPECT_EQ(Info.Description[0].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[0].Text, "Example:");
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Code);
+  EXPECT_EQ(Info.Description[1].Language, "c");
+  EXPECT_EQ(Info.Description[1].Text, "some code");
+}
+
+TEST(GTKDoc, RenderDeprecatedAndStability) {
+  GTKDocInfo Info;
+  Info.Description = {
+      {GTKDocDescriptionBlock::Paragraph, "Old function.", ""}};
+  Info.Since = "1.0";
+  Info.Deprecated = "2.0. Use new_function() instead.";
+  Info.Stability = "Unstable";
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("**Deprecated:**"), std::string::npos);
+  EXPECT_NE(Rendered.find("2.0. Use new_function() instead."), std::string::npos);
+  EXPECT_NE(Rendered.find("**Stability:**"), std::string::npos);
+  EXPECT_NE(Rendered.find("Unstable"), std::string::npos);
+  EXPECT_NE(Rendered.find("**Since:**"), std::string::npos);
+}
+
+TEST(GTKDoc, RenderCodeBlocks) {
+  GTKDocInfo Info;
+  Info.Description = {
+      {GTKDocDescriptionBlock::Paragraph, "Example function.", ""},
+      {GTKDocDescriptionBlock::Code, "int x = 42;", "C"}};
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("```C"), std::string::npos);
+  EXPECT_NE(Rendered.find("int x = 42;"), std::string::npos);
+}
+
+TEST(GTKDoc, ParseLeadingBlankLines) {
+  GTKDocInfo Info = parseGTKDoc(
+      "\n g_test_summary:\n"
+      " @summary: summary of the test purpose\n"
+      "\n"
+      " Sets the summary for a test.\n"
+      "\n"
+      " Since: 2.62\n ");
+
+  ASSERT_EQ(Info.Description.size(), 1u);
+  EXPECT_EQ(Info.Description[0].Text, "Sets the summary for a test.");
+  ASSERT_EQ(Info.Params.size(), 1u);
+  EXPECT_EQ(Info.Params[0].Name, "summary");
+  EXPECT_EQ(Info.Params[0].Description, "summary of the test purpose");
+  EXPECT_EQ(Info.Since, "2.62");
+}
+
+TEST(GTKDoc, ParseFencedCodeBlock) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "Example usage:\n"
+      "\n"
+      "```c\n"
+      "int x = my_func();\n"
+      "printf(\"%d\\n\", x);\n"
+      "```\n"
+      "\n"
+      "Done.\n");
+
+  ASSERT_EQ(Info.Description.size(), 3u);
+  EXPECT_EQ(Info.Description[0].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[0].Text, "Example usage:");
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Code);
+  EXPECT_EQ(Info.Description[1].Language, "c");
+  EXPECT_EQ(Info.Description[1].Text,
+            "int x = my_func();\nprintf(\"%d\\n\", x);");
+  EXPECT_EQ(Info.Description[2].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[2].Text, "Done.");
+}
+
+TEST(GTKDoc, GiDocgenLinks) {
+  GTKDocInfo Info;
+  Info.Description = {{GTKDocDescriptionBlock::Paragraph,
+      "Uses [func@GLib.idle_add] with [const@GLib.PRIORITY_DEFAULT_IDLE].",
+      ""}};
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("`idle_add`"), std::string::npos);
+  EXPECT_NE(Rendered.find("`PRIORITY_DEFAULT_IDLE`"), std::string::npos);
+  EXPECT_EQ(Rendered.find("[func@"), std::string::npos);
+  EXPECT_EQ(Rendered.find("[const@"), std::string::npos);
+}
+
+TEST(GTKDoc, FunctionReferences) {
+  GTKDocInfo Info;
+  Info.Description = {{GTKDocDescriptionBlock::Paragraph,
+      "Use g_list_append() or g_list_prepend() instead.", ""}};
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("`g_list_append()`"), std::string::npos);
+  EXPECT_NE(Rendered.find("`g_list_prepend()`"), std::string::npos);
+  EXPECT_EQ(Rendered.find("g_list_append()` or g_list"), std::string::npos);
+}
+
+TEST(GTKDoc, InlineMarkupConversion) {
+  GTKDocInfo Info;
+  Info.Description = {{GTKDocDescriptionBlock::Paragraph,
+      "Returns a #GList or %NULL if @list is empty.", ""}};
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("`GList`"), std::string::npos);
+  EXPECT_NE(Rendered.find("`NULL`"), std::string::npos);
+  EXPECT_NE(Rendered.find("`list`"), std::string::npos);
+  EXPECT_EQ(Rendered.find("#GList"), std::string::npos);
+  EXPECT_EQ(Rendered.find("%NULL"), std::string::npos);
+}
+
+TEST(GTKDoc, GStealPointerCodeBlockDefaultsToC) {
+  // Simulates the g_steal_pointer doc from glib after comment marker stripping.
+  GTKDocInfo Info = parseGTKDoc(
+      "g_steal_pointer:\n"
+      "@pp: (not nullable): a pointer to a pointer\n"
+      "\n"
+      "Sets @pp to %NULL, returning the value that was there before.\n"
+      "\n"
+      "This can be very useful when combined with g_autoptr() to prevent the\n"
+      "return value of a function from being automatically freed.\n"
+      "\n"
+      "|[\n"
+      "GObject *\n"
+      "create_object (void)\n"
+      "{\n"
+      "  g_autoptr(GObject) obj = g_object_new (G_TYPE_OBJECT, NULL);\n"
+      "  return g_steal_pointer (&obj);\n"
+      "}\n"
+      "]|\n"
+      "\n"
+      "Since: 2.44\n");
+
+  // Should have: paragraph, code block, (no more paragraphs after code)
+  ASSERT_GE(Info.Description.size(), 2u);
+
+  // Find the code block
+  bool FoundCodeBlock = false;
+  for (const auto &Block : Info.Description) {
+    if (Block.BlockKind == GTKDocDescriptionBlock::Code) {
+      FoundCodeBlock = true;
+      EXPECT_EQ(Block.Language, "c");
+      EXPECT_NE(Block.Text.find("create_object"), std::string::npos);
+    }
+  }
+  EXPECT_TRUE(FoundCodeBlock);
+
+  // Verify it renders with ```c
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+  EXPECT_NE(Rendered.find("```c"), std::string::npos)
+      << "Expected ```c code block, got:\n" << Rendered;
+}
+
+TEST(GTKDoc, ParsePandocCodeBlockLanguage) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "Example:\n"
+      "\n"
+      "``` { .c }\n"
+      "int x = 42;\n"
+      "```\n"
+      "\n"
+      "And python:\n"
+      "\n"
+      "```{ .python }\n"
+      "x = 42\n"
+      "```\n");
+
+  ASSERT_EQ(Info.Description.size(), 4u);
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Code);
+  EXPECT_EQ(Info.Description[1].Language, "c");
+  EXPECT_EQ(Info.Description[1].Text, "int x = 42;");
+  EXPECT_EQ(Info.Description[3].BlockKind, GTKDocDescriptionBlock::Code);
+  EXPECT_EQ(Info.Description[3].Language, "python");
+  EXPECT_EQ(Info.Description[3].Text, "x = 42");
+}
+
+TEST(GTKDoc, ParseTable) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "A description.\n"
+      "\n"
+      "| Col1 | Col2 |\n"
+      "|------|------|\n"
+      "| a    | b    |\n"
+      "\n"
+      "After table.\n");
+
+  ASSERT_EQ(Info.Description.size(), 3u);
+  EXPECT_EQ(Info.Description[0].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[0].Text, "A description.");
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Table);
+  EXPECT_EQ(Info.Description[1].Text,
+            "| Col1 | Col2 |\n|------|------|\n| a    | b    |");
+  EXPECT_EQ(Info.Description[2].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[2].Text, "After table.");
+}
+
+TEST(GTKDoc, ParseTableAtEnd) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "Before table.\n"
+      "\n"
+      "| Col1 | Col2 |\n"
+      "|------|------|\n"
+      "| a    | b    |\n");
+
+  ASSERT_EQ(Info.Description.size(), 2u);
+  EXPECT_EQ(Info.Description[0].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[0].Text, "Before table.");
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Table);
+  EXPECT_EQ(Info.Description[1].Text,
+            "| Col1 | Col2 |\n|------|------|\n| a    | b    |");
+}
+
+TEST(GTKDoc, ParseTableWithoutLeadingPipe) {
+  GTKDocInfo Info = parseGTKDoc(
+      "my_func:\n"
+      "\n"
+      "A description.\n"
+      "\n"
+      "Col1 | Col2 | Col3\n"
+      "---- | ---- | ----\n"
+      "a    | b    | c\n"
+      "d    | e    | f\n"
+      "\n"
+      "After table.\n");
+
+  ASSERT_EQ(Info.Description.size(), 3u);
+  EXPECT_EQ(Info.Description[0].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[0].Text, "A description.");
+  EXPECT_EQ(Info.Description[1].BlockKind, GTKDocDescriptionBlock::Table);
+  EXPECT_EQ(Info.Description[1].Text,
+            "| Col1 | Col2 | Col3 |\n"
+            "| ---- | ---- | ---- |\n"
+            "| a    | b    | c |\n"
+            "| d    | e    | f |");
+  EXPECT_EQ(Info.Description[2].BlockKind, GTKDocDescriptionBlock::Paragraph);
+  EXPECT_EQ(Info.Description[2].Text, "After table.");
+}
+
+TEST(GTKDoc, RenderTable) {
+  GTKDocInfo Info;
+  Info.Description = {
+      {GTKDocDescriptionBlock::Paragraph, "Before table.", ""},
+      {GTKDocDescriptionBlock::Table,
+       "| Col1 | Col2 |\n| ---- | ---- |\n| a | b |", ""},
+      {GTKDocDescriptionBlock::Paragraph, "After table.", ""}};
+
+  markup::Document Doc;
+  renderGTKDocToMarkup(Info, Doc);
+  std::string Rendered = Doc.asMarkdown();
+
+  EXPECT_NE(Rendered.find("| Col1 | Col2 |"), std::string::npos);
+  EXPECT_NE(Rendered.find("| ---- | ---- |"), std::string::npos);
+  EXPECT_NE(Rendered.find("| a | b |"), std::string::npos);
+  EXPECT_EQ(Rendered.find("```"), std::string::npos);
+}
 TEST(KernelDoc, ParseBasic) {
   KernelDocInfo Info = parseKernelDoc(
       "kfree() - Free previously allocated memory\n"

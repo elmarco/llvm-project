@@ -131,9 +131,13 @@ private:
   void valueToMarkupParagraph(markup::Paragraph &P) const;
   void offsetToMarkupParagraph(markup::Paragraph &P) const;
   void sizeToMarkupParagraph(markup::Paragraph &P) const;
+  void appendCommonMetadata(markup::Document &Output) const;
 
   /// Parse and render the hover information as Doxygen documentation.
   markup::Document presentDoxygen() const;
+
+  /// Parse and render the hover information as GTK-Doc documentation.
+  markup::Document presentGTKDoc() const;
 
   /// Parse and render the hover information as kernel-doc documentation.
   markup::Document presentKernelDoc() const;
