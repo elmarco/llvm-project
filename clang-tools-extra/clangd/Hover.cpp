@@ -22,6 +22,7 @@
 #include "clang-include-cleaner/Analysis.h"
 #include "clang-include-cleaner/IncludeSpeller.h"
 #include "clang-include-cleaner/Types.h"
+#include "index/Index.h"
 #include "index/SymbolCollector.h"
 #include "support/Markup.h"
 #include "support/Trace.h"
@@ -1407,6 +1408,20 @@ std::optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
 
   if (!HI)
     return std::nullopt;
+
+  // If no documentation was found, search the index for other symbols with the
+  // same name that have documentation (e.g. a macro shadowing a function).
+  if (HI->Documentation.empty() && Index) {
+    FuzzyFindRequest Req;
+    Req.Query = HI->Name;
+    Req.AnyScope = true;
+    Req.Limit = 5;
+    Index->fuzzyFind(Req, [&](const Symbol &S) {
+      if (HI->Documentation.empty() && S.Name == HI->Name &&
+          !S.Documentation.empty())
+        HI->Documentation = std::string(S.Documentation);
+    });
+  }
 
   // Reformat Definition
   if (!HI->Definition.empty()) {

@@ -3549,6 +3549,25 @@ TEST(Hover, DocsFromIndex) {
   }
 }
 
+TEST(Hover, DocsFromIndexMacroFallback) {
+  // Build an index from code that has a documented function.
+  TestTU IndexTU;
+  IndexTU.Code = "/// doc from function\nvoid MACRO(int x);";
+  auto Index = IndexTU.index();
+
+  // Build an AST where the same name is a macro.
+  Annotations T(R"cpp(
+  #define MACRO(x) (x)
+  int y = ^MACRO(42);
+  )cpp");
+  TestTU TU = TestTU::withCode(T.code());
+  auto AST = TU.build();
+
+  auto H = getHover(AST, T.point(), format::getLLVMStyle(), Index.get());
+  ASSERT_TRUE(H);
+  EXPECT_EQ(H->Documentation, "doc from function");
+}
+
 TEST(Hover, DocsFromAST) {
   Annotations T(R"cpp(
   // doc
