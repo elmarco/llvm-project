@@ -406,6 +406,7 @@ struct Fragment {
   struct DocumentationBlock {
     /// Specifies the format of comments in the code.
     /// Valid values are enum Config::CommentFormatPolicy values:
+    /// - Auto (default): Try all parsers, pick the richest result.
     /// - Plaintext: Treat comments as plain text.
     /// - Markdown: Treat comments as Markdown.
     /// - Doxygen: Treat comments as doxygen.

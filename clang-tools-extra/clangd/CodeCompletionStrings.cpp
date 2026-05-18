@@ -111,7 +111,8 @@ std::string getDeclComment(const ASTContext &Ctx, const NamedDecl &Decl) {
 
   std::string Doc;
 
-  if (Cfg.Documentation.CommentFormat == Config::CommentFormatPolicy::Doxygen &&
+  if ((Cfg.Documentation.CommentFormat == Config::CommentFormatPolicy::Doxygen ||
+       Cfg.Documentation.CommentFormat == Config::CommentFormatPolicy::Auto) &&
       isa<ParmVarDecl, TemplateTypeParmDecl>(Decl)) {
     // Parameters are documented in their declaration context (function or
     // template function).

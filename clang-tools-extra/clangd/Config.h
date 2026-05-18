@@ -210,6 +210,8 @@ struct Config {
   } SemanticTokens;
 
   enum class CommentFormatPolicy {
+    /// Try all parsers, pick the richest result.
+    Auto,
     /// Treat comments as plain text.
     PlainText,
     /// Treat comments as Markdown.
@@ -223,7 +225,7 @@ struct Config {
   };
 
   struct {
-    CommentFormatPolicy CommentFormat = CommentFormatPolicy::PlainText;
+    CommentFormatPolicy CommentFormat = CommentFormatPolicy::Auto;
     /// Paths to GIR files or directories for documentation lookup.
     /// If empty, auto-detects from system paths.
     std::vector<std::string> GIRPaths;

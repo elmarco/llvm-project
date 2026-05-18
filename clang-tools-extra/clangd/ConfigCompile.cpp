@@ -817,6 +817,7 @@ struct FragmentCompiler {
       if (auto Val =
               compileEnum<Config::CommentFormatPolicy>("CommentFormat",
                                                        *F.CommentFormat)
+                  .map("Auto", Config::CommentFormatPolicy::Auto)
                   .map("Plaintext", Config::CommentFormatPolicy::PlainText)
                   .map("Markdown", Config::CommentFormatPolicy::Markdown)
                   .map("Doxygen", Config::CommentFormatPolicy::Doxygen)

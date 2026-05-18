@@ -1871,9 +1871,60 @@ markup::Document HoverInfo::presentDefault() const {
   return Output;
 }
 
+markup::Document HoverInfo::presentAuto() const {
+  if (Documentation.empty())
+    return presentDefault();
+
+  // Score each structured parser by counting extracted elements.
+  // Don't count brief — the Doxygen parser auto-promotes any free paragraph to
+  // brief, which would match plain comments. Only count explicit @param/@return.
+  unsigned DoxygenScore = 0;
+  {
+    SymbolDocCommentVisitor V(Documentation, CommentOpts);
+    if (V.hasReturnCommand())
+      DoxygenScore++;
+    if (Parameters)
+      for (const auto &P : *Parameters)
+        if (P.Name && V.isParameterDocumented(*P.Name))
+          DoxygenScore++;
+  }
+
+  // GTK-Doc — only count structured elements, not plain description blocks.
+  GTKDocInfo GTKInfo = parseGTKDoc(Documentation);
+  unsigned GTKScore = GTKInfo.Params.size();
+  if (!GTKInfo.Returns.empty())
+    GTKScore++;
+  if (!GTKInfo.Since.empty())
+    GTKScore++;
+  if (!GTKInfo.Deprecated.empty())
+    GTKScore++;
+
+  // Kernel-Doc — only count structured elements, not plain description.
+  KernelDocInfo KernelInfo = parseKernelDoc(Documentation);
+  unsigned KernelScore =
+      KernelInfo.Params.size() + KernelInfo.Sections.size();
+  if (!KernelInfo.Returns.empty())
+    KernelScore++;
+  KernelScore += KernelInfo.ReturnItems.size();
+
+  // Pick the parser with the highest score. On ties, prefer Doxygen (most
+  // common format in C/C++).
+  if (DoxygenScore > 0 && DoxygenScore >= GTKScore &&
+      DoxygenScore >= KernelScore)
+    return presentDoxygen();
+  if (GTKScore > 0 && GTKScore >= KernelScore)
+    return presentGTKDoc();
+  if (KernelScore > 0)
+    return presentKernelDoc();
+
+  return presentDefault();
+}
+
 std::string HoverInfo::present(MarkupKind Kind) const {
   if (Kind == MarkupKind::Markdown) {
     const Config &Cfg = Config::current();
+    if (Cfg.Documentation.CommentFormat == Config::CommentFormatPolicy::Auto)
+      return presentAuto().asMarkdown();
     if (Cfg.Documentation.CommentFormat ==
         Config::CommentFormatPolicy::Markdown)
       return presentDefault().asMarkdown();
@@ -1886,8 +1937,6 @@ std::string HoverInfo::present(MarkupKind Kind) const {
       return presentKernelDoc().asMarkdown();
     if (Cfg.Documentation.CommentFormat ==
         Config::CommentFormatPolicy::PlainText)
-      // If the user prefers plain text, we use the present() method to generate
-      // the plain text output.
       return presentDefault().asEscapedMarkdown();
   }
 

@@ -5393,6 +5393,90 @@ TEST(Hover, CKernelDocInlineMember) {
   EXPECT_NE(Rendered.find("the status flags"), std::string::npos);
 }
 
+TEST(Hover, AutoDetectsDoxygen) {
+  Annotations T(R"cpp(
+    /**
+     * \brief Computes the sum.
+     *
+     * \param a First operand.
+     * \param b Second operand.
+     * \returns The sum of a and b.
+     */
+    int [[^add]](int a, int b);
+  )cpp");
+
+  TestTU TU = TestTU::withCode(T.code());
+  auto AST = TU.build();
+
+  Config Cfg;
+  Cfg.Documentation.CommentFormat = Config::CommentFormatPolicy::Auto;
+  WithContextValue WithCfg(Config::Key, std::move(Cfg));
+
+  auto H = getHover(AST, T.point(), format::getLLVMStyle(), nullptr);
+  ASSERT_TRUE(H);
+
+  auto Rendered = H->present(MarkupKind::Markdown);
+  EXPECT_NE(Rendered.find("### Brief"), std::string::npos);
+  EXPECT_NE(Rendered.find("Computes the sum."), std::string::npos);
+  EXPECT_NE(Rendered.find("### Parameters"), std::string::npos);
+  EXPECT_NE(Rendered.find("### Returns"), std::string::npos);
+}
+
+TEST(Hover, AutoDetectsKernelDoc) {
+  Annotations T(R"c(
+    /**
+     * my_func() - Do something useful.
+     * @x: the input value
+     *
+     * Detailed description here.
+     *
+     * Return: the result
+     */
+    int [[^my_func]](int x);
+  )c");
+
+  TestTU TU = TestTU::withCode(T.code());
+  TU.Filename = "TestTU.c";
+  TU.ExtraArgs = {"-std=c17"};
+  auto AST = TU.build();
+
+  Config Cfg;
+  Cfg.Documentation.CommentFormat = Config::CommentFormatPolicy::Auto;
+  WithContextValue WithCfg(Config::Key, std::move(Cfg));
+
+  auto H = getHover(AST, T.point(), format::getLLVMStyle(), nullptr);
+  ASSERT_TRUE(H);
+
+  auto Rendered = H->present(MarkupKind::Markdown);
+  EXPECT_NE(Rendered.find("### Parameters"), std::string::npos);
+  EXPECT_NE(Rendered.find("`x`"), std::string::npos);
+  EXPECT_NE(Rendered.find("### Returns"), std::string::npos);
+}
+
+TEST(Hover, AutoFallsBackToDefault) {
+  Annotations T(R"cpp(
+    // A simple function with no structured doc.
+    int [[^plain]](int x);
+  )cpp");
+
+  TestTU TU = TestTU::withCode(T.code());
+  auto AST = TU.build();
+
+  Config Cfg;
+  Cfg.Documentation.CommentFormat = Config::CommentFormatPolicy::Auto;
+  WithContextValue WithCfg(Config::Key, std::move(Cfg));
+
+  auto H = getHover(AST, T.point(), format::getLLVMStyle(), nullptr);
+  ASSERT_TRUE(H);
+
+  auto Rendered = H->present(MarkupKind::Markdown);
+  // Should still render something (the default presenter).
+  EXPECT_FALSE(Rendered.empty());
+  // Should NOT have structured headings like "Brief" or "Parameters".
+  EXPECT_EQ(Rendered.find("### Brief"), std::string::npos);
+  EXPECT_EQ(Rendered.find("### Parameters"), std::string::npos);
+}
+
 } // namespace
 } // namespace clangd
 } // namespace clang

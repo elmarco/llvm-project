@@ -144,6 +144,9 @@ private:
 
   /// Render the hover information as a default documentation.
   markup::Document presentDefault() const;
+
+  /// Try all structured parsers and return the richest result.
+  markup::Document presentAuto() const;
 };
 
 inline bool operator==(const HoverInfo::PrintedType &LHS,
